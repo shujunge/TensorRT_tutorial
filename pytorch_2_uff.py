@@ -163,7 +163,7 @@ assert(fc2)
 
 fc2.get_output(0).set_name("prob")
 network.mark_output(fc2.get_output(0))
-builder.set_max_batch_size(1)
+builder.set_max_batch_size(100)
 builder.set_max_workspace_size(1 << 20)
 
 engine = builder.build_cuda_engine(network)
@@ -172,30 +172,32 @@ builder.destroy()
 
 runtime = trt.infer.create_infer_runtime(G_LOGGER)
 img, target = next(iter(test_loader))
-img = img.numpy()[0]
-target = target.numpy()[0]
+img = img.numpy()
+target = target.numpy()
 
 print("Test Case: " + str(target))
 img = img.ravel()
 
 context = engine.create_execution_context()
-output = np.empty(10, dtype = np.float32)
+output = np.empty((100,10), dtype = np.float32)
 
 #alocate device memory
 d_input = cuda.mem_alloc(1 * img.size * img.dtype.itemsize)
 d_output = cuda.mem_alloc(1 * output.size * output.dtype.itemsize)
 bindings = [int(d_input), int(d_output)]
+
 stream = cuda.Stream()
 #transfer input data to device
 cuda.memcpy_htod_async(d_input, img, stream)
 #execute model
-context.enqueue(1, bindings, stream.handle, None)
+context.enqueue(100, bindings, stream.handle, None)
 #transfer predictions back
 cuda.memcpy_dtoh_async(output, d_output, stream)
 #syncronize threads
 stream.synchronize()
+
 print("Test Case: " + str(target))
-print ("Prediction: " + str(np.argmax(output)))
+print ("Prediction: " + str(np.argmax(output,axis=1)))
 print("tensorrt time:",time()-Start)
 trt.utils.write_engine_to_file("./pyt_mnist.engine", engine.serialize())
 new_engine = trt.utils.load_engine(G_LOGGER, "./pyt_mnist.engine")

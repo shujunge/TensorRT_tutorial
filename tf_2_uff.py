@@ -182,48 +182,46 @@ def run_training(data_sets):
                                                                 graphdef,
                                                                 OUTPUT_NAMES)
     return tf.graph_util.remove_training_nodes(frozen_graph)
-from time import time
-Start=time()
+
+Start=time.time()
 MNIST_DATASETS = input_data.read_data_sets('datasets/')
 tf_model = run_training(MNIST_DATASETS)
-print("tensorflow time:",time()-Start)
+print("tensorflow time:",time.time()-Start)
 
-Start=time()
+Start=time.time()
 uff_model = uff.from_tensorflow(tf_model, ["fc2/Relu"])
 G_LOGGER = trt.infer.ConsoleLogger(trt.infer.LogSeverity.ERROR)
 parser = uffparser.create_uff_parser()
 parser.register_input("Placeholder", (1,28,28),0)
 parser.register_output("fc2/Relu")
-engine = trt.utils.uff_to_trt_engine(G_LOGGER, uff_model, parser, 1, 1 << 20)
+engine = trt.utils.uff_to_trt_engine(G_LOGGER, uff_model, parser, 100, 1 << 20) ##100为batchsize
 
-host_mem = parser.hidden_plugin_memory()
 parser.destroy()
-img, label = MNIST_DATASETS.test.next_batch(1)
-img = img[0]
+img, label = MNIST_DATASETS.test.next_batch(100)
+
 #convert input data to Float32
 img = img.astype(np.float32)
-label = label[0]
 runtime = trt.infer.create_infer_runtime(G_LOGGER)
 context = engine.create_execution_context()
-output = np.empty(10, dtype = np.float32)
+output = np.empty((100,10), dtype = np.float32)
 #alocate device memory
-d_input = cuda.mem_alloc(1 * img.size * img.dtype.itemsize)
-d_output = cuda.mem_alloc(1 * output.size * output.dtype.itemsize)
+d_input = cuda.mem_alloc(100 * img[0].size * img[0].dtype.itemsize)
+d_output = cuda.mem_alloc(100 * output[0].size * output[0].dtype.itemsize)
 bindings = [int(d_input), int(d_output)]
 
 stream = cuda.Stream()
-
 #transfer input data to device
 cuda.memcpy_htod_async(d_input, img, stream)
 #execute model
-context.enqueue(1, bindings, stream.handle, None)
+context.enqueue(100, bindings, stream.handle, None)
 #transfer predictions back
 cuda.memcpy_dtoh_async(output, d_output, stream)
 #syncronize threads
 stream.synchronize()
+
 print("Test Case: " + str(label))
-print ("Prediction: " + str(np.argmax(output)))
-print("tensorrt time:",time()-Start)
+print ("Prediction: " + str(np.argmax(output,axis=1)))
+print("tensorrt time:",time.time()-Start)
 
 trt.utils.write_engine_to_file("./tf_mnist.engine", engine.serialize())
 new_engine = trt.utils.load_engine(G_LOGGER, "./tf_mnist.engine")
